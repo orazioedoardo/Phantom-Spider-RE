@@ -13,6 +13,7 @@ import struct
 import sys
 import zipfile
 from collections import defaultdict
+from pathlib import Path
 
 # ------------------------------------------------------------------------------------------------- the music
 
@@ -238,8 +239,8 @@ def subset(sf2, used):
     return b"RIFF" + struct.pack("<I", len(body)) + body, len(presets), len(instruments), len(sample_ids)
 
 
-def main():
-    soundfont, jar, out = sys.argv[1:4]
+def make(soundfont, jar):
+    """The SoundFont for the JAR's music: (data, presets, instruments, samples) kept"""
     used = defaultdict(set)
     with zipfile.ZipFile(jar) as z:
         for name in z.namelist():
@@ -249,11 +250,16 @@ def main():
         sf2 = f.read()
     if sf2[:4] != b"RIFF" or sf2[8:12] != b"sfbk":
         sys.exit(f"{soundfont} isn't a SoundFont")
-    data, presets, instruments, samples = subset(sf2, used)
+    return subset(sf2, used)
+
+
+def main():
+    soundfont, jar, out = sys.argv[1:4]
+    data, presets, instruments, samples = make(soundfont, jar)
     with open(out, "wb") as f:
         f.write(data)
     print(f"{out}: {presets} presets, {instruments} instruments, {samples} samples, "
-          f"{len(data) / 1048576:.1f} MB (from {len(sf2) / 1048576:.1f} MB)")
+          f"{len(data) / 1048576:.1f} MB (from {Path(soundfont).stat().st_size / 1048576:.1f} MB)")
 
 
 if __name__ == "__main__":

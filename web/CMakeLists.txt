@@ -10,6 +10,8 @@
 # src/main.rs); on its first start, the game unpacks the JAR into its folder, /home/web_user/phantom-spider
 # (src/paths.rs), which the page keeps in the browser's storage, with the saves and settings.
 #
+# Both are kept in the build folder (files/, by files.py): once built, the JAR and the SoundFont given can be removed.
+#
 # The page starts the game with callMain, and keeps that folder in IndexedDB (IDBFS): see the link options below.
 # Needs rustup, with the wasm32-unknown-emscripten target, and Python with Pillow (for the icon).
 
@@ -20,13 +22,9 @@ if(NOT EMSCRIPTEN)
 	message(FATAL_ERROR "This is the web build: configure it with emcmake")
 endif()
 
+# (files.py says which is missing, if neither these nor the copies it keeps are there)
 set(PHANTOM_SPIDER_JAR "" CACHE FILEPATH "Phantom_Spider_s40v2.jar, the original game")
 set(PHANTOM_SPIDER_SOUNDFONT "" CACHE FILEPATH "A General MIDI SoundFont (.sf2) for the music")
-foreach(file PHANTOM_SPIDER_JAR PHANTOM_SPIDER_SOUNDFONT)
-	if(NOT EXISTS "${${file}}")
-		message(FATAL_ERROR "Set ${file} to the file (it's '${${file}}')")
-	endif()
-endforeach()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 # rustup's own cargo and rustc, which have its targets (a cargo installed otherwise may come first on the PATH)
@@ -40,18 +38,18 @@ set(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(TARGET wasm32-unknown-emscripten)
 set(CARGO_OUT "${CMAKE_BINARY_DIR}/target/${TARGET}/release")
 
-# The SoundFont, with only what the game's music plays
-set(SOUNDFONT "${CMAKE_BINARY_DIR}/soundfont.sf2")
-add_custom_command(
-	OUTPUT "${SOUNDFONT}"
-	COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/soundfont.py" "${PHANTOM_SPIDER_SOUNDFONT}"
-	        "${PHANTOM_SPIDER_JAR}" "${SOUNDFONT}"
-	DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/soundfont.py" "${PHANTOM_SPIDER_SOUNDFONT}" "${PHANTOM_SPIDER_JAR}"
+# The files the .data holds, kept up to date in files/ on every build: the JAR, and the SoundFont with only what the
+# game's music plays (files.py only rewrites a file when it changes)
+set(FILES "${CMAKE_BINARY_DIR}/files")
+add_custom_target(phantom_spider_files
+	COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/files.py" "${PHANTOM_SPIDER_JAR}"
+	        "${PHANTOM_SPIDER_SOUNDFONT}" "${FILES}"
+	USES_TERMINAL
 	VERBATIM
 )
 
-# The files the .data holds, for build.rs, which relinks the game when they change ("source@path", separated by ;)
-set(PRELOAD "${PHANTOM_SPIDER_JAR}@/Phantom_Spider_s40v2.jar$<SEMICOLON>${SOUNDFONT}@/soundfont.sf2")
+# For build.rs, which packs them and relinks the game when they change ("source@path", separated by ;)
+set(PRELOAD "${FILES}/Phantom_Spider_s40v2.jar@/Phantom_Spider_s40v2.jar$<SEMICOLON>${FILES}/soundfont.sf2@/soundfont.sf2")
 
 # For the page: it starts the game (callMain), which exits with the game (calling the page's onExit), and it keeps the
 # game's folder in IndexedDB (IDBFS). (build.rs adds what the game needs: Emscripten's SDL3, and its JavaScript.)
@@ -81,10 +79,10 @@ add_custom_target(phantom_spider ALL
 	COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CARGO_OUT}/phantom_spider.wasm" "${CMAKE_BINARY_DIR}/PhantomSpider.wasm"
 	# (cargo leaves the .data where the linker wrote it)
 	COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CARGO_OUT}/deps/phantom_spider.data" "${CMAKE_BINARY_DIR}/PhantomSpider.data"
-	DEPENDS "${SOUNDFONT}"
 	USES_TERMINAL
 	VERBATIM
 )
+add_dependencies(phantom_spider phantom_spider_files)
 
 add_custom_command(
 	OUTPUT "${CMAKE_BINARY_DIR}/PhantomSpider.png"
