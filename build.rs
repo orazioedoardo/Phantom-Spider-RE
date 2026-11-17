@@ -50,9 +50,18 @@ fn link_clang_runtime() {
 
 /// The web build (Emscripten): Emscripten's SDL3, and the JavaScript the game
 /// calls (web/library.js). The game's loop runs until it quits, waiting for
-/// the browser's next frame in between: ASYNCIFY lets it.
+/// the browser's next frame in between: ASYNCIFY lets it. The files to put in
+/// the web build's .data come from PHANTOM_SPIDER_PRELOAD ("source@path",
+/// separated by ;: see web/CMakeLists.txt); the game is relinked when they
+/// change, as the linker is what packs them.
 fn link_web() {
     println!("cargo:rerun-if-changed=web/library.js");
+    println!("cargo:rerun-if-env-changed=PHANTOM_SPIDER_PRELOAD");
+    for entry in env::var("PHANTOM_SPIDER_PRELOAD").unwrap_or_default().split(';').filter(|e| !e.is_empty()) {
+        let source = entry.rsplit_once('@').map_or(entry, |(source, _)| source);
+        println!("cargo:rerun-if-changed={source}");
+        println!("cargo:rustc-link-arg=--preload-file={entry}");
+    }
     let library = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("web/library.js");
     for arg in ["-sUSE_SDL=3", "-sASYNCIFY", "-sALLOW_MEMORY_GROWTH"] {
         println!("cargo:rustc-link-arg={arg}");

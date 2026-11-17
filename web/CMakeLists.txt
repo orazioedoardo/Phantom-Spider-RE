@@ -5,8 +5,9 @@
 #     cmake --build build
 #
 # Writes, at the top of the build folder, PhantomSpider.js, PhantomSpider.wasm and PhantomSpider.data, and
-# PhantomSpider.png, a 256x256 icon. The .data holds the JAR and the SoundFont, at / (where the game looks for them: see
-# exe_dir in src/main.rs); on its first start, the game unpacks the JAR into its folder, /home/web_user/phantom-spider
+# PhantomSpider.png, a 256x256 icon. The .data holds the JAR and a SoundFont made from the one given with only what the
+# game's music plays (soundfont.py), a fraction of the size, at / (where the game looks for them: see exe_dir in
+# src/main.rs); on its first start, the game unpacks the JAR into its folder, /home/web_user/phantom-spider
 # (src/paths.rs), which the page keeps in the browser's storage, with the saves and settings.
 #
 # The page starts the game with callMain, and keeps that folder in IndexedDB (IDBFS): see the link options below.
@@ -26,7 +27,6 @@ foreach(file PHANTOM_SPIDER_JAR PHANTOM_SPIDER_SOUNDFONT)
 		message(FATAL_ERROR "Set ${file} to the file (it's '${${file}}')")
 	endif()
 endforeach()
-get_filename_component(SOUNDFONT_NAME "${PHANTOM_SPIDER_SOUNDFONT}" NAME)
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 # rustup's own cargo and rustc, which have its targets (a cargo installed otherwise may come first on the PATH)
@@ -40,16 +40,26 @@ set(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(TARGET wasm32-unknown-emscripten)
 set(CARGO_OUT "${CMAKE_BINARY_DIR}/target/${TARGET}/release")
 
+# The SoundFont, with only what the game's music plays
+set(SOUNDFONT "${CMAKE_BINARY_DIR}/soundfont.sf2")
+add_custom_command(
+	OUTPUT "${SOUNDFONT}"
+	COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/soundfont.py" "${PHANTOM_SPIDER_SOUNDFONT}"
+	        "${PHANTOM_SPIDER_JAR}" "${SOUNDFONT}"
+	DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/soundfont.py" "${PHANTOM_SPIDER_SOUNDFONT}" "${PHANTOM_SPIDER_JAR}"
+	VERBATIM
+)
+
+# The files the .data holds, for build.rs, which relinks the game when they change ("source@path", separated by ;)
+set(PRELOAD "${PHANTOM_SPIDER_JAR}@/Phantom_Spider_s40v2.jar$<SEMICOLON>${SOUNDFONT}@/soundfont.sf2")
+
 # For the page: it starts the game (callMain), which exits with the game (calling the page's onExit), and it keeps the
-# game's folder in IndexedDB (IDBFS). The JAR and the SoundFont are preloaded. (build.rs adds what the game needs:
-# Emscripten's SDL3, and its JavaScript.)
+# game's folder in IndexedDB (IDBFS). (build.rs adds what the game needs: Emscripten's SDL3, and its JavaScript.)
 set(LINK_OPTIONS
 	-sINVOKE_RUN=0
 	-sEXIT_RUNTIME
 	-sEXPORTED_RUNTIME_METHODS=callMain,FS,IDBFS,addRunDependency,removeRunDependency
 	-lidbfs.js
-	"--preload-file=${PHANTOM_SPIDER_JAR}@/Phantom_Spider_s40v2.jar"
-	"--preload-file=${PHANTOM_SPIDER_SOUNDFONT}@/${SOUNDFONT_NAME}"
 )
 # Passed to cargo as CARGO_ENCODED_RUSTFLAGS: the flags separated by ASCII 0x1f, so that paths may have spaces
 string(ASCII 31 SEPARATOR)
@@ -64,13 +74,14 @@ endforeach()
 # Cargo knows what to rebuild, so it runs on every build; the files it makes are then copied under the game's name
 add_custom_target(phantom_spider ALL
 	COMMAND "${CMAKE_COMMAND}" -E env "RUSTC=${rustc_path}" "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/target"
-	        "CARGO_ENCODED_RUSTFLAGS=${RUSTFLAGS}"
+	        "CARGO_ENCODED_RUSTFLAGS=${RUSTFLAGS}" "PHANTOM_SPIDER_PRELOAD=${PRELOAD}"
 	        "${cargo_path}" build --release --target ${TARGET} --manifest-path "${SOURCE}/Cargo.toml"
 	COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CARGO_OUT}/phantom-spider.js" "${CMAKE_BINARY_DIR}/PhantomSpider.js"
 	# (the .wasm is named after the crate, with an underscore)
 	COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CARGO_OUT}/phantom_spider.wasm" "${CMAKE_BINARY_DIR}/PhantomSpider.wasm"
 	# (cargo leaves the .data where the linker wrote it)
 	COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CARGO_OUT}/deps/phantom_spider.data" "${CMAKE_BINARY_DIR}/PhantomSpider.data"
+	DEPENDS "${SOUNDFONT}"
 	USES_TERMINAL
 	VERBATIM
 )
