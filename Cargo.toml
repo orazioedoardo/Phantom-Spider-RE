@@ -22,10 +22,17 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 sha2 = "0.10"
 rustysynth = "1.3"
 embedded-graphics = "0.8"
+
 # SDL3 is built from source and linked statically on every system, so the
 # release is one self-contained program (SDL still loads X11/Wayland, audio
 # and so on from the system at run time).
+[target.'cfg(not(target_os = "emscripten"))'.dependencies]
 sdl3 = { version = "0.22", features = ["build-from-source-static"] }
+
+# The web build links Emscripten's own SDL3 instead (build.rs).
+[target.'cfg(target_os = "emscripten")'.dependencies]
+sdl3 = "0.22"
+sdl3-sys = { version = "0.7", features = ["no-link"] }
 
 [profile.release]
 opt-level = 3

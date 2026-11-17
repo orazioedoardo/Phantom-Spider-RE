@@ -19,6 +19,8 @@ static ROOT: OnceLock<PathBuf> = OnceLock::new();
 pub fn init() -> Result<PathBuf, String> {
     let root = match std::env::var_os("PHANTOM_SPIDER_HOME") {
         Some(d) => PathBuf::from(d),
+        // the web build: a folder the page keeps in the browser's storage (web/CMakeLists.txt)
+        None if cfg!(target_os = "emscripten") => PathBuf::from("/home/web_user/phantom-spider"),
         None => std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|d| d.to_path_buf()))

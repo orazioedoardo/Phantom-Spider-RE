@@ -6,6 +6,7 @@ fn main() {
     match env::var("CARGO_CFG_TARGET_OS").as_deref() {
         Ok("windows") => {}
         Ok("macos") => return link_clang_runtime(),
+        Ok("emscripten") => return link_web(),
         _ => return,
     }
 
@@ -45,4 +46,16 @@ fn link_clang_runtime() {
     let lib = PathBuf::from(dir).join("lib/darwin/libclang_rt.osx.a");
     assert!(lib.exists(), "clang runtime not found at {}", lib.display());
     println!("cargo:rustc-link-arg={}", lib.display());
+}
+
+/// The web build (Emscripten): Emscripten's SDL3, and the JavaScript the game
+/// calls (web/library.js). The game's loop runs until it quits, waiting for
+/// the browser's next frame in between: ASYNCIFY lets it.
+fn link_web() {
+    println!("cargo:rerun-if-changed=web/library.js");
+    let library = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("web/library.js");
+    for arg in ["-sUSE_SDL=3", "-sASYNCIFY", "-sALLOW_MEMORY_GROWTH"] {
+        println!("cargo:rustc-link-arg={arg}");
+    }
+    println!("cargo:rustc-link-arg=--js-library={}", library.display());
 }

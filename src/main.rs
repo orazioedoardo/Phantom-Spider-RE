@@ -14,6 +14,8 @@ mod paths;
 mod settings;
 mod pads;
 mod setup;
+#[cfg(target_os = "emscripten")]
+mod web;
 
 use midp::{assets, audio, font, gfx, lang, lcdui};
 
@@ -111,6 +113,10 @@ fn parse_args() -> Opts {
 }
 
 fn exe_dir() -> PathBuf {
+    // the web build has no executable: the page puts the files it comes with at the root (web/CMakeLists.txt)
+    if cfg!(target_os = "emscripten") {
+        return PathBuf::from("/");
+    }
     std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_else(|| PathBuf::from("."))
 }
 
@@ -382,9 +388,9 @@ fn main() {
         }
     }
 
-    // A JAR given on the command line, or one sitting next to the game.
+    // A JAR given on the command line, or one sitting next to the game (in its folder, or next to the program).
     if !setup::prepared(&data) {
-        let jar = o.game.clone().or_else(|| setup::find_nearby(&root));
+        let jar = o.game.clone().or_else(|| setup::find_nearby(&root)).or_else(|| setup::find_nearby(&exe_dir()));
         if let Some(jar) = jar {
             log!("preparing game data from {}", jar.display());
             if let Err(e) = setup::prepare(&jar, &data, |_, _| {}) {
@@ -487,21 +493,9 @@ fn setup_screen(
         }
         if browse && !dialog_open {
             dialog_open = true;
-            let slot = picked.clone();
-            let filters = [sdl3::dialog::DialogFileFilter { name: "Phantom Spider (.jar)", pattern: "jar" }];
-            let r = sdl3::dialog::show_open_file_dialog(
-                &filters,
-                None::<PathBuf>,
-                false,
-                canvas.window(),
-                Box::new(move |res, _| {
-                    let path = res.ok().and_then(|v| v.into_iter().next());
-                    *slot.lock().unwrap() = Some(path);
-                }),
-            );
-            if let Err(e) = r {
+            if let Err(e) = pick_jar(canvas.window(), picked.clone()) {
                 dialog_open = false;
-                status = Some((format!("Couldn't open a file picker ({e:?}). Drop the file on this window instead."), true));
+                status = Some((format!("Couldn't open a file picker ({e}). Drop the file on this window instead."), true));
             }
         }
         let result = picked.lock().unwrap().take();
@@ -529,6 +523,29 @@ fn setup_screen(
         present(canvas, tex, g)?;
         std::thread::sleep(Duration::from_millis(16));
     }
+}
+
+/// Open a file picker for the JAR; the chosen file (or None) goes in `slot`.
+#[cfg(not(target_os = "emscripten"))]
+fn pick_jar(window: &sdl3::video::Window, slot: Arc<Mutex<Option<Option<PathBuf>>>>) -> Result<(), String> {
+    let filters = [sdl3::dialog::DialogFileFilter { name: "Phantom Spider (.jar)", pattern: "jar" }];
+    sdl3::dialog::show_open_file_dialog(
+        &filters,
+        None::<PathBuf>,
+        false,
+        window,
+        Box::new(move |res, _| {
+            let path = res.ok().and_then(|v| v.into_iter().next());
+            *slot.lock().unwrap() = Some(path);
+        }),
+    )
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// The web build comes with the JAR, and SDL has no file dialog there.
+#[cfg(target_os = "emscripten")]
+fn pick_jar(_window: &sdl3::video::Window, _slot: Arc<Mutex<Option<Option<PathBuf>>>>) -> Result<(), String> {
+    Err("not in a browser".into())
 }
 
 fn draw_setup(g: &mut Graphics, status: &Option<(String, bool)>) {
@@ -600,11 +617,17 @@ fn run(o: &Opts, s: &Settings, data: &Path, g: &mut Graphics, font: &font::Font)
     let scale = o.scale.unwrap_or(s.scale);
     let mut wb = video.window("Phantom Spider", 128 * scale, 128 * scale);
     wb.resizable().position_centered().high_pixel_density();
+    // The web build: the page sizes the canvas, which SDL follows, unless the window is recreated (SDL then measures
+    // the canvas as it left it, and sizes it itself). The renderer needs an OpenGL window: create one from the start.
+    #[cfg(target_os = "emscripten")]
+    wb.opengl();
     let mut window = wb.build().map_err(|e| e.to_string())?;
     if o.fullscreen || s.fullscreen || bigpicture {
         let _ = window.set_fullscreen(true);
     }
     let mut canvas = window.into_canvas();
+    // (the web build waits for the browser's display refresh itself: web::next_frame)
+    #[cfg(not(target_os = "emscripten"))]
     unsafe {
         sdl3::sys::render::SDL_SetRenderVSync(canvas.raw(), 1);
     }
@@ -733,6 +756,9 @@ fn run(o: &Opts, s: &Settings, data: &Path, g: &mut Graphics, font: &font::Font)
         }
 
         present(&mut canvas, &mut tex, g)?;
+        #[cfg(target_os = "emscripten")]
+        web::next_frame();
+        #[cfg(not(target_os = "emscripten"))]
         if dt < 4.0 {
             std::thread::sleep(Duration::from_millis(2));
         }

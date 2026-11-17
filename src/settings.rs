@@ -25,7 +25,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             scale: 5,
-            fullscreen: true,
+            fullscreen: FULLSCREEN,
             scaling: "sharp".into(),
             volume: 100,
             music: true,
@@ -35,6 +35,10 @@ impl Default for Settings {
         }
     }
 }
+
+/// Full screen at start, except on the web: browsers only allow it after a click or key press, and the page has its
+/// own full-screen switch.
+const FULLSCREEN: bool = !cfg!(target_os = "emscripten");
 
 const TEMPLATE: &str = r#"# Phantom Spider RE settings. Command-line options override these.
 
@@ -96,7 +100,8 @@ pub fn load() -> Settings {
     match fs::read_to_string(&path) {
         Ok(text) => parse(&text, &mut s),
         Err(_) => {
-            if let Err(e) = fs::write(&path, TEMPLATE) {
+            let template = TEMPLATE.replace("fullscreen = true", &format!("fullscreen = {FULLSCREEN}"));
+            if let Err(e) = fs::write(&path, template) {
                 crate::log!("couldn't write {}: {e}", path.display());
             }
         }

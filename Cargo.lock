@@ -305,6 +305,7 @@ dependencies = [
  "png",
  "rustysynth",
  "sdl3",
+ "sdl3-sys",
  "sha2",
  "zip",
 ]
