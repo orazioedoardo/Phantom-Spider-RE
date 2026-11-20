@@ -34,7 +34,7 @@ foreach(tool cargo rustc)
 	                COMMAND_ERROR_IS_FATAL ANY)
 endforeach()
 
-set(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/..")
+file(REAL_PATH "${CMAKE_CURRENT_SOURCE_DIR}/.." SOURCE)
 set(TARGET wasm32-unknown-emscripten)
 set(CARGO_OUT "${CMAKE_BINARY_DIR}/target/${TARGET}/release")
 
@@ -59,14 +59,33 @@ set(LINK_OPTIONS
 	-sEXPORTED_RUNTIME_METHODS=callMain,FS,IDBFS,addRunDependency,removeRunDependency
 	-lidbfs.js
 )
+# Nothing of this machine in the game: the source paths it keeps (for panic messages) are written without this
+# machine's folders. Cargo's downloaded crates are in its home (CARGO_HOME, by default ~/.cargo); the standard library's
+# are already /rustc/<version>.
+if(DEFINED ENV{CARGO_HOME})
+	set(CARGO_HOME "$ENV{CARGO_HOME}")
+else()
+	set(CARGO_HOME "$ENV{HOME}/.cargo")
+endif()
+set(RUSTC_OPTIONS
+	"--remap-path-prefix=${CARGO_HOME}/registry/src=/cargo/registry/src"
+	"--remap-path-prefix=${CARGO_HOME}/git/checkouts=/cargo/git/checkouts"
+	"--remap-path-prefix=${SOURCE}=/phantom-spider-re"
+	"--remap-path-prefix=${CMAKE_BINARY_DIR}=/build"
+)
+
 # Passed to cargo as CARGO_ENCODED_RUSTFLAGS: the flags separated by ASCII 0x1f, so that paths may have spaces
 string(ASCII 31 SEPARATOR)
 set(RUSTFLAGS "")
-foreach(option ${LINK_OPTIONS})
+foreach(option ${RUSTC_OPTIONS} ${LINK_OPTIONS})
 	if(RUSTFLAGS)
 		string(APPEND RUSTFLAGS "${SEPARATOR}")
 	endif()
-	string(APPEND RUSTFLAGS "-Clink-arg=${option}")
+	if(option MATCHES "^--remap-path-prefix")
+		string(APPEND RUSTFLAGS "${option}")
+	else()
+		string(APPEND RUSTFLAGS "-Clink-arg=${option}")
+	endif()
 endforeach()
 
 # Cargo knows what to rebuild, so it runs on every build; the files it makes are then copied under the game's name
@@ -75,6 +94,10 @@ add_custom_target(phantom_spider ALL
 	        "CARGO_ENCODED_RUSTFLAGS=${RUSTFLAGS}" "PHANTOM_SPIDER_PRELOAD=${PRELOAD}"
 	        "${cargo_path}" build --release --target ${TARGET} --manifest-path "${SOURCE}/Cargo.toml"
 	COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CARGO_OUT}/phantom-spider.js" "${CMAKE_BINARY_DIR}/PhantomSpider.js"
+	# The linker names the data package after where it wrote it, an absolute path: keep only its name
+	COMMAND Python3::Interpreter -c
+	        "import pathlib, sys; p = pathlib.Path(sys.argv[1]); p.write_text(p.read_text().replace(sys.argv[2], ''))"
+	        "${CMAKE_BINARY_DIR}/PhantomSpider.js" "${CARGO_OUT}/deps/"
 	# (the .wasm is named after the crate, with an underscore)
 	COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CARGO_OUT}/phantom_spider.wasm" "${CMAKE_BINARY_DIR}/PhantomSpider.wasm"
 	# (cargo leaves the .data where the linker wrote it)
