@@ -444,6 +444,10 @@ fn start_game(o: &Opts, s: &Settings, data: &Path, gui: bool) -> Game {
 fn present(canvas: &mut sdl3::render::WindowCanvas, tex: &mut sdl3::render::Texture, g: &Graphics) -> Result<(), String> {
     let bytes: Vec<u8> = g.fb.iter().flat_map(|p| p.to_le_bytes()).collect();
     tex.update(None, &bytes, 128 * 4).map_err(|e| e.to_string())?;
+    // On the web, the margins around the game are see-through: the page's background shows, light or dark
+    #[cfg(target_os = "emscripten")]
+    canvas.set_draw_color(sdl3::pixels::Color::RGBA(0, 0, 0, 0));
+    #[cfg(not(target_os = "emscripten"))]
     canvas.set_draw_color(sdl3::pixels::Color::RGB(0, 0, 0));
     canvas.clear();
     canvas.copy(tex, None, None).map_err(|e| e.to_string())?;
@@ -631,7 +635,11 @@ fn run(o: &Opts, s: &Settings, data: &Path, g: &mut Graphics, font: &font::Font)
     unsafe {
         sdl3::sys::render::SDL_SetRenderVSync(canvas.raw(), 1);
     }
-    let presentation = if s.scaling == "fill" {
+    // On the web, the screen fills the page's height (or width), still crisp: scaled by any amount with SDL's pixel
+    // art sampling, which keeps the pixels sharp and only smooths the edges between them. (Whole pixels would leave
+    // bars above and below in most windows.)
+    let fill = cfg!(target_os = "emscripten") || s.scaling == "fill";
+    let presentation = if fill {
         sdl3::sys::render::SDL_LOGICAL_PRESENTATION_LETTERBOX
     } else {
         sdl3::sys::render::SDL_LOGICAL_PRESENTATION_INTEGER_SCALE
@@ -640,6 +648,10 @@ fn run(o: &Opts, s: &Settings, data: &Path, g: &mut Graphics, font: &font::Font)
     let tc = canvas.texture_creator();
     let mut tex = tc.create_texture_streaming(PixelFormat::ARGB8888, 128, 128).map_err(|e| e.to_string())?;
     tex.set_scale_mode(sdl3::render::ScaleMode::Nearest);
+    #[cfg(target_os = "emscripten")]
+    unsafe {
+        sdl3::sys::render::SDL_SetTextureScaleMode(tex.raw(), sdl3::sys::surface::SDL_SCALEMODE_PIXELART);
+    }
     let mut events = sdl.event_pump().map_err(|e| e.to_string())?;
 
     if !setup::prepared(data) && !setup_screen(&mut canvas, &mut tex, &mut events, &pad_sub, &mut pads, g, data)? {
